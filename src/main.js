@@ -29,6 +29,8 @@ let birdDirection = 1; // 1 for down, -1 for up
 let base;
 let gameStarted = false;
 let gameOver = false;
+let scoreText;
+let point, hit, wing, die;
 
 function preload() {
     this.load.image('background', 'assets/background.jpg');
@@ -40,12 +42,22 @@ function preload() {
     this.load.image("startGame", "assets/start-game.png");
     this.load.image("gameOver", "assets/gameover.png");
     this.load.image("resume", "assets/resume.png");
+    this.load.audio("die", "assets/die.wav");
+    this.load.audio("hit", "assets/hit.wav");
+    this.load.audio("score", "assets/point.wav");
+    this.load.audio("wing", "assets/wing.wav");
 }
 
 function create() {
     // this.add.image(400, 300, 'background');
     background = this.add.tileSprite(0, 0, game.config.width, game.config.height, 'background');
     background.setScale(2).setOrigin(0, 0);
+
+    //load the sound effects
+    point = this.sound.add("score");
+    hit = this.sound.add("hit");
+    wing = this.sound.add("wing");
+    die = this.sound.add("die");
 
     //add start game image
     let startGame = this.add.image(game.config.width / 2, game.config.height / 2, 'startGame');
@@ -56,6 +68,19 @@ function create() {
         bird.setVisible(true); // Show the bird when the game starts
         gameStarted = true; // Start the game
            // Create a new piller every 2 seconds
+
+           /*
+            create a score display that is centered horizontally
+            positioned near the top of the screen
+            the score is initialized to 0 and updated
+            render above other game objects
+           */
+          scoreText = this.add.text(game.config.width /2 , 50, '0', {
+            fontSize: '32px',
+            fill: "#fff"
+          });
+          scoreText.setOrigin(0.5, 0.5); //set the origin to the center
+          scoreText.setDepth(2); //set the depth of the score text to 2
     this.time.addEvent({
         delay: 2000,
         callback: () => {
@@ -88,29 +113,63 @@ function create() {
     //create a random size piller
     const createPiller = () => {
         let pillerHeight = Phaser.Math.Between(100, 400);
-        let piller = this.add.sprite(game.config.width, game.config.height - baseHeight, 'piller');
-        piller.displayHeight = pillerHeight; //set the height of the piller
-        piller.setOrigin(0.5, 1); //set the origin to the bottom center
+        let gap = 150;
 
-        //remove the piller when it goes off screen
-        this.physics.add.existing(piller);
-        piller.body.setVelocityX(-200); //move the piller to the left
+        let bottomPiller = this.physics.add.sprite(game.config.width, game.config.height - base.height, "piller");
+        bottomPiller.displayHeight = pillerHeight;
+        bottomPiller.setOrigin(0.5, 1);
+        bottomPiller.setVelocityX(-200);
 
-        piller.body.onWorldBounds = true;
-        piller.body.world.on('worldbounds', function(body) {    
-            if(body.gameObject === piller) {    
-                piller.destroy(); //destroy the piller when it goes off screen
+
+        //create top piller
+        let topPiller = this.physics.add.sprite(game.config.width, 0, "piller");
+        topPiller.displayHeight = game.config.height - base.height - pillerHeight - gap;
+        topPiller.setOrigin(0.5, 0);
+        topPiller.setVelocityX(-200);
+
+        //flip the top piller
+        topPiller.setFlipY(true);
+
+       
+
+        //create a helper function - destroy piller
+        const destroyPiller = (piller) => {
+            //check piller right edge less than 0
+            if(piller.getBounds().right < 0){
+                piller.destroy();
             }
-        })
+        }
 
-        //add collision between the bird and the piller
-        this.physics.add.overlap(bird, piller, handleCollision, null, this);
+        //set the onWorldBounds
+        bottomPiller.body.onWorldBounds = true;
+        topPiller.body.onWorldBounds = true;
+
+
+        //listen for world bounds and destroy the piller
+        this.physics.world.on("worldbounds", function (body) {
+            if(body.gameObject === bottomPiller){
+                destroyPiller(bottomPiller);
+            }
+            if(body.gameObject === topPiller){
+                destroyPiller(topPiller);
+            }
+        });
+
+        //Add collision detection betn the bird and the piller
+        this.physics.add.collider(bird, bottomPiller,handleCollision, null, this);
+        this.physics.add.collider(bird, topPiller,handleCollision, null, this);
+
+     
 
         
     };
 
     //handle collision between the bird and the base
     const handleCollision = () => {
+        //play the sounds
+        hit.play();
+
+        die.play();
         gameOver = true;
         //make bird red to indicate game over
         bird.setTint(0xff0000);
@@ -177,6 +236,7 @@ function update() {
         const spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
         
         if(spaceKey.isDown || this.input.activePointer.isDown) {
+            wing.play();
             bird.body.setVelocityY(-200); // Move the bird up
             birdDirection = -1; // set the bird direction to up
         }    
@@ -187,5 +247,32 @@ function update() {
     // if(bird.y + bird.height /2  > game.config.height - base.height){
     //     bird.y = game.config.height - base.height - bird.height / 2; // Prevent the bird from falling through the base
     // }
+
+    this.physics.world.colliders.getActive().forEach((collider) => {
+
+        //if the first obj is bird and the second obj is piller
+        if(collider.object1 === bird && collider.object2.texture.key === "piller"){
+            let piller = collider.object2; // get the piller
+
+
+            //if the bird passes the piller and piller is not scored, make the piller scored
+            if(piller.x + piller.width /2 < bird.x - bird.width /2 && !piller.scored){
+                piller.scored  =true;
+
+                //check if the both piller scored
+                let pillerPair = this.physics.world.colliders.getActive().find((collider) => {
+                    return collider.object2 !== piller && collider.object2.texture.key === "piller" && Math.abs(collider.object2.x - piller.x) < 10;
+                })
+
+                if(pillerPair && !pillerPair.object2.scored){
+
+                    //play score sound
+                    point.play();
+                    pillerPair.object2.scored = true;
+                    scoreText.setText(parseInt(scoreText.text) + 1);
+                }
+            }
+        }
+    })
 
 }
